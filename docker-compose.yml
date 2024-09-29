@@ -1,0 +1,91 @@
+---
+version: '3.4'
+
+services:
+  postgresql:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    container_name: authentik-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - /home/authentication/authentik/database:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${PG_PASS}
+      - POSTGRES_USER=${PG_USER:-authentik}
+      - POSTGRES_DB=${PG_DB:-authentik}
+    env_file:
+      - .env
+    networks:
+      - authentik-proxy
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    container_name: authentik-redis
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 3s
+    networks:
+      - authentik-proxy
+    volumes:
+      - /home/authentication/authentik/redis:/data
+  server:
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2024.8.3}
+    restart: unless-stopped
+    container_name: authentik-server
+    command: server
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_REDIS__DB: 1
+    volumes:
+      - /home/authentication/authentik/media:/media
+      - /home/authentication/authentik/custom-templates:/templates
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${AUTHENTIK_PORT_HTTP:-9000}:9000"
+      - "127.0.0.1:${AUTHENTIK_PORT_HTTPS:-9443}:9443"
+    networks:
+      - authentik-proxy
+  worker:
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2024.8.3}
+    restart: unless-stopped
+    container_name: authentik-worker
+    command: worker
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_REDIS__DB: 1
+#    user: root
+    volumes:
+      #- /home/authentication/authentik/media:/media
+      #- /home/authentication/authentik/certs:/certs
+      - /tmp/podman.sock:/var/run/docker.sock
+      - /home/authentication/authentik/custom-templates:/templates
+    env_file:
+      - .env
+    networks:
+      - authentik-proxy
+
+        #volumes:
+        #  database:
+        #    driver: local
+
+networks:
+  authentik-proxy:
+    #    driver: bridge
+    internal: true
